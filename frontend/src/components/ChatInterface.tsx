@@ -1,27 +1,32 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Bot, User } from 'lucide-react';
+import { Send, Bot, User, Upload, X, FileText } from 'lucide-react';
 import { Agent, ChatMessage } from '@/types/Agent';
 import { ChatResponseCard } from './ChatResponseCard';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 interface ChatInterfaceProps {
   selectedAgent: Agent | null;
   conversationId: string | null;
   uploadedFile: File | null;
+  onFileUpload: (file: File | null) => void;
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   selectedAgent,
   conversationId,
   uploadedFile,
+  onFileUpload,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [conversationFile, setConversationFile] = useState<File | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (conversationId) {
@@ -41,13 +46,71 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (!conversationId) return;
     
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/conversations/${conversationId}/messages`);
+      const response = await fetch(`${API_URL}/api/conversations/${conversationId}/messages`);
       if (response.ok) {
         const data = await response.json();
-        setMessages(data);
+        
+        // Process the messages to handle different response formats
+        const processedMessages = data.map((msg: any) => {
+          // Handle custom agent responses that might contain execution_history
+          if (msg.role === 'assistant' && typeof msg.content === 'string') {
+            try {
+              // Try to parse if content is JSON (from custom agents)
+              const parsed = JSON.parse(msg.content);
+              if (parsed.execution_history) {
+                // Convert execution history to reasoning steps format
+                const reasoning_steps = parsed.execution_history.map((exec: any, index: number) => ({
+                  step_number: index + 1,
+                  reasoning: exec.reasoning || '',
+                  next_step: exec.next_step || '',
+                  code: exec.code_to_execute || '',
+                  output: exec.result?.output || '',
+                  error: exec.result?.error || '',
+                  plot_path: exec.result?.returned_objects?.plot_path || null
+                }));
+                
+                return {
+                  ...msg,
+                  content: parsed.final_answer || 'Analysis completed.',
+                  reasoning_steps,
+                  plot_paths: parsed.execution_history
+                    .map((exec: any) => exec.result?.returned_objects?.plot_path)
+                    .filter(Boolean)
+                };
+              } else if (parsed.updated_answer || parsed.code) {
+                // Handle custom agent direct responses
+                return {
+                  ...msg,
+                  content: parsed.updated_answer || parsed.reasoning || msg.content,
+                  code: parsed.code || undefined
+                };
+              }
+            } catch (e) {
+              // If not JSON, return as is
+              return msg;
+            }
+          }
+          return msg;
+        });
+        
+        setMessages(processedMessages);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setConversationFile(file);
+    }
+  };
+
+  const removeConversationFile = () => {
+    setConversationFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -65,13 +128,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setIsLoading(true);
 
     try {
-      // Upload file if present
+      // Upload file if present (prioritize conversation-specific file over global file)
       let file_path = null;
-      if (uploadedFile) {
+      const fileToUpload = conversationFile || uploadedFile;
+      
+      if (fileToUpload) {
         const formData = new FormData();
-        formData.append('file', uploadedFile);
+        formData.append('file', fileToUpload);
         
-        const uploadResponse = await fetch(`${import.meta.env.VITE_API_URL}/upload`, {
+        const uploadResponse = await fetch(`${API_URL}/api/upload`, {
           method: 'POST',
           body: formData,
         });
@@ -79,10 +144,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (uploadResponse.ok) {
           const uploadData = await uploadResponse.json();
           file_path = uploadData.file_path;
+          console.log('File uploaded successfully:', file_path);
         }
       }
 
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/conversations/${conversationId}/messages`, {
+      const response = await fetch(`${API_URL}/api/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -141,9 +207,44 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <div>
             <h2 className="text-lg font-semibold">{selectedAgent.name}</h2>
             <p className="text-sm text-gray-400">
-              {selectedAgent.model_type} • Memory: {selectedAgent.memory_enabled ? 'On' : 'Off'} • 
-              {uploadedFile ? ` File: ${uploadedFile.name}` : ' No file'}
+              {selectedAgent.model_type} • Memory: {selectedAgent.memory_enabled ? 'On' : 'Off'}
             </p>
+          </div>
+          
+          {/* Conversation-specific file upload */}
+          <div className="flex items-center space-x-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.txt,.json"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <Button
+              onClick={() => fileInputRef.current?.click()}
+              variant="outline"
+              size="sm"
+              className="bg-gray-700 border-gray-600 hover:bg-gray-600"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Add File
+            </Button>
+            {(conversationFile || uploadedFile) && (
+              <div className="text-sm text-gray-400 flex items-center">
+                <FileText className="w-4 h-4 mr-1" />
+                File: {(conversationFile || uploadedFile)?.name}
+                {conversationFile && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={removeConversationFile}
+                    className="h-4 w-4 p-0 ml-2 text-gray-400 hover:text-red-400"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

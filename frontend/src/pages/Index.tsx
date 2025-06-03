@@ -15,9 +15,15 @@ const Index = () => {
     fetchConversations();
   }, []);
 
+  useEffect(() => {
+    if (selectedAgent) {
+      fetchConversations();
+    }
+  }, [selectedAgent]);
+
   const fetchAgents = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/agent-definitions`);
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/agent-definitions`);
       const data = await response.json();
       setAgents(data);
       if (data.length > 0 && !selectedAgent) {
@@ -30,7 +36,7 @@ const Index = () => {
 
   const fetchConversations = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/conversations`);
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/conversations`);
       const data = await response.json();
       setConversations(data);
     } catch (error) {
@@ -40,7 +46,7 @@ const Index = () => {
 
   const handleAgentCreate = async (agentData: Omit<AgentDefinition, 'id'>) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/agent-definitions`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/agent-definitions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(agentData),
@@ -55,7 +61,7 @@ const Index = () => {
 
   const handleAgentUpdate = async (agentId: string, agentData: Partial<AgentDefinition>) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/agent-definitions/${agentId}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/agent-definitions/${agentId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(agentData),
@@ -70,7 +76,7 @@ const Index = () => {
 
   const handleAgentDelete = async (agentId: string) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/agent-definitions/${agentId}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/agent-definitions/${agentId}`, {
         method: 'DELETE',
       });
       if (response.ok) {
@@ -88,7 +94,7 @@ const Index = () => {
     if (!selectedAgent) return;
     
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/conversations`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: selectedAgent.id }),
@@ -104,18 +110,40 @@ const Index = () => {
     }
   };
 
+  const handleConversationDelete = async (conversationId: string) => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/conversation/${conversationId}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        if (selectedConversation === conversationId) {
+          setSelectedConversation(null);
+        }
+        fetchConversations();
+      }
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+    }
+  };
+
+  const handleAgentSelect = (agent: Agent) => {
+    setSelectedAgent(agent);
+    setSelectedConversation(null);
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white flex">
       <AgentSidebar
         agents={agents}
         selectedAgent={selectedAgent}
-        onAgentSelect={setSelectedAgent}
+        onAgentSelect={handleAgentSelect}
         onAgentCreate={handleAgentCreate}
         onAgentUpdate={handleAgentUpdate}
         onAgentDelete={handleAgentDelete}
         conversations={conversations}
         selectedConversation={selectedConversation}
         onConversationSelect={setSelectedConversation}
+        onConversationDelete={handleConversationDelete}
         onNewConversation={handleNewConversation}
         uploadedFile={uploadedFile}
         onFileUpload={setUploadedFile}
@@ -125,6 +153,7 @@ const Index = () => {
           selectedAgent={selectedAgent}
           conversationId={selectedConversation}
           uploadedFile={uploadedFile}
+          onFileUpload={setUploadedFile}
         />
       </div>
     </div>
