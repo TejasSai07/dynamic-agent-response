@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Plus, Settings, Trash2, MessageSquare, Upload } from 'lucide-react';
+import { Plus, Settings, Trash2, MessageSquare, X } from 'lucide-react';
 import { Agent, Conversation, AgentDefinition } from '@/types/Agent';
 import { AgentForm } from './AgentForm';
 import { FileUpload } from './FileUpload';
@@ -18,6 +18,7 @@ interface AgentSidebarProps {
   conversations: Conversation[];
   selectedConversation: string | null;
   onConversationSelect: (conversationId: string) => void;
+  onConversationDelete: (conversationId: string) => void;
   onNewConversation: () => void;
   uploadedFile: File | null;
   onFileUpload: (file: File | null) => void;
@@ -33,6 +34,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
   conversations,
   selectedConversation,
   onConversationSelect,
+  onConversationDelete,
   onNewConversation,
   uploadedFile,
   onFileUpload,
@@ -60,6 +62,26 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
     setShowForm(false);
     setEditingAgent(null);
   };
+
+  const handleDeleteConversation = async (conversationId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (window.confirm('Are you sure you want to delete this conversation?')) {
+      onConversationDelete(conversationId);
+    }
+  };
+
+  // Filter conversations for the selected agent
+  const agentConversations = selectedAgent 
+    ? conversations.filter(conv => {
+        // For built-in agents, match by agent_type
+        if (selectedAgent.is_built_in) {
+          return conv.agent_type === selectedAgent.id;
+        }
+        // For custom agents, we need to check if this conversation belongs to this agent
+        // This would require additional data from the backend, for now we'll show all
+        return conv.agent_type === 'custom';
+      })
+    : [];
 
   return (
     <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
@@ -143,27 +165,50 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
       <Separator className="bg-gray-700" />
 
       <div className="p-4">
-        <h3 className="text-sm font-medium text-gray-400 mb-3">CONVERSATIONS</h3>
-        <ScrollArea className="h-32">
-          <div className="space-y-2">
-            {conversations.map((conversation) => (
-              <div
-                key={conversation.id}
-                className={`p-2 rounded-lg cursor-pointer transition-all duration-200 ${
-                  selectedConversation === conversation.id
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-700 hover:bg-gray-600'
-                }`}
-                onClick={() => onConversationSelect(conversation.id)}
-              >
-                <div className="text-sm font-medium truncate">{conversation.label}</div>
-                <div className="text-xs text-gray-400">
-                  {new Date(conversation.latest_timestamp).toLocaleDateString()}
+        <h3 className="text-sm font-medium text-gray-400 mb-3">
+          {selectedAgent ? `${selectedAgent.name.toUpperCase()} CONVERSATIONS` : 'SELECT AGENT'}
+        </h3>
+        {selectedAgent ? (
+          <ScrollArea className="h-32">
+            <div className="space-y-2">
+              {agentConversations.map((conversation) => (
+                <div
+                  key={conversation.id}
+                  className={`p-2 rounded-lg cursor-pointer transition-all duration-200 group flex items-center justify-between ${
+                    selectedConversation === conversation.id
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-700 hover:bg-gray-600'
+                  }`}
+                  onClick={() => onConversationSelect(conversation.id)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{conversation.label}</div>
+                    <div className="text-xs text-gray-400">
+                      {new Date(conversation.latest_timestamp).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => handleDeleteConversation(conversation.id, e)}
+                    className="h-6 w-6 p-0 text-gray-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
                 </div>
-              </div>
-            ))}
+              ))}
+              {agentConversations.length === 0 && (
+                <div className="text-sm text-gray-400 text-center py-4">
+                  No conversations yet. Start a new one!
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        ) : (
+          <div className="text-sm text-gray-400 text-center py-4">
+            Select an agent to view its conversations
           </div>
-        </ScrollArea>
+        )}
       </div>
 
       <Separator className="bg-gray-700" />

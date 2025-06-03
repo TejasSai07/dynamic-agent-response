@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { AgentSidebar } from '@/components/AgentSidebar';
 import { ChatInterface } from '@/components/ChatInterface';
@@ -14,6 +15,13 @@ const Index = () => {
     fetchAgents();
     fetchConversations();
   }, []);
+
+  // Fetch conversations when selected agent changes
+  useEffect(() => {
+    if (selectedAgent) {
+      fetchConversations();
+    }
+  }, [selectedAgent]);
 
   const fetchAgents = async () => {
     try {
@@ -104,18 +112,40 @@ const Index = () => {
     }
   };
 
+  const handleConversationDelete = async (conversationId: string) => {
+    try {
+      const response = await fetch(`/conversation/${conversationId}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        if (selectedConversation === conversationId) {
+          setSelectedConversation(null);
+        }
+        fetchConversations();
+      }
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+    }
+  };
+
+  const handleAgentSelect = (agent: Agent) => {
+    setSelectedAgent(agent);
+    setSelectedConversation(null); // Clear conversation when switching agents
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white flex">
       <AgentSidebar
         agents={agents}
         selectedAgent={selectedAgent}
-        onAgentSelect={setSelectedAgent}
+        onAgentSelect={handleAgentSelect}
         onAgentCreate={handleAgentCreate}
         onAgentUpdate={handleAgentUpdate}
         onAgentDelete={handleAgentDelete}
         conversations={conversations}
         selectedConversation={selectedConversation}
         onConversationSelect={setSelectedConversation}
+        onConversationDelete={handleConversationDelete}
         onNewConversation={handleNewConversation}
         uploadedFile={uploadedFile}
         onFileUpload={setUploadedFile}
@@ -125,6 +155,7 @@ const Index = () => {
           selectedAgent={selectedAgent}
           conversationId={selectedConversation}
           uploadedFile={uploadedFile}
+          onFileUpload={setUploadedFile}
         />
       </div>
     </div>
