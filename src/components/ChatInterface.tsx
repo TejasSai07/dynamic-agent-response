@@ -3,20 +3,20 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Bot, User, Code, BarChart3, ChevronDown, ChevronUp } from 'lucide-react';
-import { Agent, ChatMessage, AgentResponse } from '@/types/Agent';
+import { Send, Bot, User } from 'lucide-react';
+import { Agent, ChatMessage } from '@/types/Agent';
 import { ChatResponseCard } from './ChatResponseCard';
 
 interface ChatInterfaceProps {
   selectedAgent: Agent | null;
-  csvEnabled: boolean;
-  uploadedFiles: File[];
+  conversationId: string | null;
+  uploadedFile: File | null;
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   selectedAgent,
-  csvEnabled,
-  uploadedFiles,
+  conversationId,
+  uploadedFile,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -24,19 +24,40 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (conversationId) {
+      fetchMessages();
+    } else {
+      setMessages([]);
+    }
+  }, [conversationId]);
+
+  useEffect(() => {
     if (scrollAreaRef.current) {
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
     }
   }, [messages]);
 
+  const fetchMessages = async () => {
+    if (!conversationId) return;
+    
+    try {
+      const response = await fetch(`/api/conversations/${conversationId}/messages`);
+      if (response.ok) {
+        const data = await response.json();
+        setMessages(data);
+      }
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    }
+  };
+
   const handleSendMessage = async () => {
-    if (!inputValue.trim() || !selectedAgent || isLoading) return;
+    if (!inputValue.trim() || !conversationId || isLoading) return;
 
     const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      type: 'user',
+      role: 'user',
       content: inputValue,
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
     };
 
     setMessages(prev => [...prev, userMessage]);
@@ -44,30 +65,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setIsLoading(true);
 
     try {
-      const response = await fetch('/chat', {
+      // Upload file if present
+      let file_path = null;
+      if (uploadedFile) {
+        const formData = new FormData();
+        formData.append('file', uploadedFile);
+        
+        const uploadResponse = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        
+        if (uploadResponse.ok) {
+          const uploadData = await uploadResponse.json();
+          file_path = uploadData.file_path;
+        }
+      }
+
+      const response = await fetch(`/api/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          agent_id: selectedAgent.id,
           message: inputValue,
-          use_csv: csvEnabled && uploadedFiles.length > 0,
+          file_path: file_path,
         }),
       });
 
       if (response.ok) {
-        const data: AgentResponse = await response.json();
-        
-        const agentMessage: ChatMessage = {
-          id: (Date.now() + 1).toString(),
-          type: 'agent',
-          content: data.final_answer,
-          timestamp: new Date(),
-          code: data.code,
-          graph: data.graph,
-          finalAnswer: data.final_answer,
-        };
-
-        setMessages(prev => [...prev, agentMessage]);
+        // Refresh messages to get the AI response
+        fetchMessages();
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -83,15 +109,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   };
 
-  const resetSession = async () => {
-    try {
-      await fetch('/reset_session', { method: 'POST' });
-      setMessages([]);
-    } catch (error) {
-      console.error('Error resetting session:', error);
-    }
-  };
-
   if (!selectedAgent) {
     return (
       <div className="flex-1 flex items-center justify-center bg-gray-900">
@@ -99,6 +116,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
           <h2 className="text-xl font-medium mb-2">No Agent Selected</h2>
           <p>Select an agent from the sidebar to start chatting</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!conversationId) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-900">
+        <div className="text-center text-gray-400">
+          <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
+          <h2 className="text-xl font-medium mb-2">No Conversation Selected</h2>
+          <p>Start a new conversation to begin chatting with {selectedAgent.name}</p>
         </div>
       </div>
     );
@@ -112,27 +141,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <div>
             <h2 className="text-lg font-semibold">{selectedAgent.name}</h2>
             <p className="text-sm text-gray-400">
-              {selectedAgent.model} • Memory: {selectedAgent.enable_memory ? 'On' : 'Off'} • 
-              {csvEnabled && uploadedFiles.length > 0 ? ` ${uploadedFiles.length} CSV files` : ' No CSV'}
+              {selectedAgent.model_type} • Memory: {selectedAgent.memory_enabled ? 'On' : 'Off'} • 
+              {uploadedFile ? ` File: ${uploadedFile.name}` : ' No file'}
             </p>
           </div>
-          <Button
-            onClick={resetSession}
-            variant="outline"
-            size="sm"
-            className="text-gray-400 border-gray-600 hover:bg-gray-700"
-          >
-            Clear Chat
-          </Button>
         </div>
       </div>
 
       {/* Messages */}
       <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
         <div className="space-y-4 max-w-4xl mx-auto">
-          {messages.map((message) => (
-            <div key={message.id}>
-              {message.type === 'user' ? (
+          {messages.map((message, index) => (
+            <div key={index}>
+              {message.role === 'user' ? (
                 <div className="flex items-start space-x-3">
                   <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
                     <User className="w-4 h-4" />
@@ -141,7 +162,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     <p className="text-white">{message.content}</p>
                   </div>
                 </div>
-              ) : (
+              ) : message.role === 'assistant' ? (
                 <div className="flex items-start space-x-3">
                   <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center">
                     <Bot className="w-4 h-4" />
@@ -150,7 +171,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     <ChatResponseCard message={message} />
                   </div>
                 </div>
-              )}
+              ) : null}
             </div>
           ))}
           

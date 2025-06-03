@@ -8,11 +8,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Agent } from '@/types/Agent';
+import { Agent, AgentDefinition } from '@/types/Agent';
 
 interface AgentFormProps {
   agent: Agent | null;
-  onSubmit: (agent: Omit<Agent, 'id'>) => void;
+  onSubmit: (agent: Omit<AgentDefinition, 'id'>) => void;
   onCancel: () => void;
 }
 
@@ -38,20 +38,22 @@ export const AgentForm: React.FC<AgentFormProps> = ({
 }) => {
   const [formData, setFormData] = useState({
     name: '',
-    model: 'gpt-4o',
-    prompt: '',
+    model_type: 'gpt-4o',
+    system_prompt: '',
     tools: [] as string[],
-    enable_memory: false,
+    memory_enabled: false,
+    tasks: [] as string[],
   });
 
   useEffect(() => {
     if (agent) {
       setFormData({
         name: agent.name,
-        model: agent.model,
-        prompt: agent.prompt,
-        tools: agent.tools,
-        enable_memory: agent.enable_memory,
+        model_type: agent.model_type,
+        system_prompt: '', // This would need to be fetched from the backend
+        tools: [], // This would need to be fetched from the backend
+        memory_enabled: agent.memory_enabled || false,
+        tasks: [],
       });
     }
   }, [agent]);
@@ -92,7 +94,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({
 
           <div>
             <Label htmlFor="model">Model</Label>
-            <Select value={formData.model} onValueChange={(value) => setFormData(prev => ({ ...prev, model: value }))}>
+            <Select value={formData.model_type} onValueChange={(value) => setFormData(prev => ({ ...prev, model_type: value }))}>
               <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
                 <SelectValue />
               </SelectTrigger>
@@ -110,8 +112,8 @@ export const AgentForm: React.FC<AgentFormProps> = ({
             <Label htmlFor="prompt">System Prompt</Label>
             <Textarea
               id="prompt"
-              value={formData.prompt}
-              onChange={(e) => setFormData(prev => ({ ...prev, prompt: e.target.value }))}
+              value={formData.system_prompt}
+              onChange={(e) => setFormData(prev => ({ ...prev, system_prompt: e.target.value }))}
               className="bg-gray-700 border-gray-600 text-white min-h-[100px]"
               placeholder="You are a helpful assistant..."
               required
@@ -140,8 +142,8 @@ export const AgentForm: React.FC<AgentFormProps> = ({
           <div className="flex items-center space-x-2">
             <Switch
               id="memory"
-              checked={formData.enable_memory}
-              onCheckedChange={(checked) => setFormData(prev => ({ ...prev, enable_memory: checked }))}
+              checked={formData.memory_enabled}
+              onCheckedChange={(checked) => setFormData(prev => ({ ...prev, memory_enabled: checked }))}
             />
             <Label htmlFor="memory">Enable Memory</Label>
           </div>

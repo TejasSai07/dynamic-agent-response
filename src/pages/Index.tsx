@@ -2,21 +2,23 @@
 import React, { useState, useEffect } from 'react';
 import { AgentSidebar } from '@/components/AgentSidebar';
 import { ChatInterface } from '@/components/ChatInterface';
-import { Agent } from '@/types/Agent';
+import { Agent, Conversation } from '@/types/Agent';
 
 const Index = () => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [csvEnabled, setCsvEnabled] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
   useEffect(() => {
     fetchAgents();
+    fetchConversations();
   }, []);
 
   const fetchAgents = async () => {
     try {
-      const response = await fetch('/get_agents');
+      const response = await fetch('/api/agent-definitions');
       const data = await response.json();
       setAgents(data);
       if (data.length > 0 && !selectedAgent) {
@@ -27,9 +29,19 @@ const Index = () => {
     }
   };
 
-  const handleAgentCreate = async (agentData: Omit<Agent, 'id'>) => {
+  const fetchConversations = async () => {
     try {
-      const response = await fetch('/add_agent', {
+      const response = await fetch('/api/conversations');
+      const data = await response.json();
+      setConversations(data);
+    } catch (error) {
+      console.error('Error fetching conversations:', error);
+    }
+  };
+
+  const handleAgentCreate = async (agentData: Omit<AgentDefinition, 'id'>) => {
+    try {
+      const response = await fetch('/api/agent-definitions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(agentData),
@@ -42,12 +54,12 @@ const Index = () => {
     }
   };
 
-  const handleAgentUpdate = async (agentId: string, agentData: Partial<Agent>) => {
+  const handleAgentUpdate = async (agentId: string, agentData: Partial<AgentDefinition>) => {
     try {
-      const response = await fetch('/update_agent', {
+      const response = await fetch(`/api/agent-definitions/${agentId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: agentId, ...agentData }),
+        body: JSON.stringify(agentData),
       });
       if (response.ok) {
         fetchAgents();
@@ -59,10 +71,8 @@ const Index = () => {
 
   const handleAgentDelete = async (agentId: string) => {
     try {
-      const response = await fetch('/delete_agent', {
+      const response = await fetch(`/api/agent-definitions/${agentId}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: agentId }),
       });
       if (response.ok) {
         if (selectedAgent?.id === agentId) {
@@ -75,6 +85,26 @@ const Index = () => {
     }
   };
 
+  const handleNewConversation = async () => {
+    if (!selectedAgent) return;
+    
+    try {
+      const response = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: selectedAgent.id }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setSelectedConversation(data.conversation_id);
+        fetchConversations();
+      }
+    } catch (error) {
+      console.error('Error creating conversation:', error);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white flex">
       <AgentSidebar
@@ -84,16 +114,18 @@ const Index = () => {
         onAgentCreate={handleAgentCreate}
         onAgentUpdate={handleAgentUpdate}
         onAgentDelete={handleAgentDelete}
-        csvEnabled={csvEnabled}
-        onCsvToggle={setCsvEnabled}
-        uploadedFiles={uploadedFiles}
-        onFilesUpload={setUploadedFiles}
+        conversations={conversations}
+        selectedConversation={selectedConversation}
+        onConversationSelect={setSelectedConversation}
+        onNewConversation={handleNewConversation}
+        uploadedFile={uploadedFile}
+        onFileUpload={setUploadedFile}
       />
       <div className="flex-1">
         <ChatInterface
           selectedAgent={selectedAgent}
-          csvEnabled={csvEnabled}
-          uploadedFiles={uploadedFiles}
+          conversationId={selectedConversation}
+          uploadedFile={uploadedFile}
         />
       </div>
     </div>
