@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import { AgentSidebar } from '@/components/AgentSidebar';
 import { ChatInterface } from '@/components/ChatInterface';
-import { Agent, Conversation } from '@/types/Agent';
+import { Agent, Conversation, AgentDefinition } from '@/types/Agent';
 
 const Index = () => {
   const [agents, setAgents] = useState<Agent[]>([]);
