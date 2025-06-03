@@ -8,6 +8,8 @@ import { Agent, Conversation, AgentDefinition } from '@/types/Agent';
 import { AgentForm } from './AgentForm';
 import { FileUpload } from './FileUpload';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 interface AgentSidebarProps {
   agents: Agent[];
   selectedAgent: Agent | null;
@@ -66,7 +68,16 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
   const handleDeleteConversation = async (conversationId: string, event: React.MouseEvent) => {
     event.stopPropagation();
     if (window.confirm('Are you sure you want to delete this conversation?')) {
-      onConversationDelete(conversationId);
+      try {
+        const response = await fetch(`${API_URL}/conversation/${conversationId}`, {
+          method: 'DELETE',
+        });
+        if (response.ok) {
+          onConversationDelete(conversationId);
+        }
+      } catch (error) {
+        console.error('Error deleting conversation:', error);
+      }
     }
   };
 
@@ -77,8 +88,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
         if (selectedAgent.is_built_in) {
           return conv.agent_type === selectedAgent.id;
         }
-        // For custom agents, we need to check if this conversation belongs to this agent
-        // This would require additional data from the backend, for now we'll show all
+        // For custom agents, check if conversation belongs to this agent
         return conv.agent_type === 'custom';
       })
     : [];

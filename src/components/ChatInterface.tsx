@@ -7,6 +7,8 @@ import { Send, Bot, User, Upload, X, FileText } from 'lucide-react';
 import { Agent, ChatMessage } from '@/types/Agent';
 import { ChatResponseCard } from './ChatResponseCard';
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 interface ChatInterfaceProps {
   selectedAgent: Agent | null;
   conversationId: string | null;
@@ -45,10 +47,54 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (!conversationId) return;
     
     try {
-      const response = await fetch(`/api/conversations/${conversationId}/messages`);
+      const response = await fetch(`${API_URL}/api/conversations/${conversationId}/messages`);
       if (response.ok) {
         const data = await response.json();
-        setMessages(data);
+        
+        // Process the messages to handle different response formats
+        const processedMessages = data.map((msg: any) => {
+          // Handle custom agent responses that might contain execution_history
+          if (msg.role === 'assistant' && typeof msg.content === 'string') {
+            try {
+              // Try to parse if content is JSON (from custom agents)
+              const parsed = JSON.parse(msg.content);
+              if (parsed.execution_history) {
+                // Convert execution history to reasoning steps format
+                const reasoning_steps = parsed.execution_history.map((exec: any, index: number) => ({
+                  step_number: index + 1,
+                  reasoning: exec.reasoning || '',
+                  next_step: exec.next_step || '',
+                  code: exec.code_to_execute || '',
+                  output: exec.result?.output || '',
+                  error: exec.result?.error || '',
+                  plot_path: exec.result?.returned_objects?.plot_path || null
+                }));
+                
+                return {
+                  ...msg,
+                  content: parsed.final_answer || 'Analysis completed.',
+                  reasoning_steps,
+                  plot_paths: parsed.execution_history
+                    .map((exec: any) => exec.result?.returned_objects?.plot_path)
+                    .filter(Boolean)
+                };
+              } else if (parsed.updated_answer || parsed.code) {
+                // Handle custom agent direct responses
+                return {
+                  ...msg,
+                  content: parsed.updated_answer || parsed.reasoning || msg.content,
+                  code: parsed.code || undefined
+                };
+              }
+            } catch (e) {
+              // If not JSON, return as is
+              return msg;
+            }
+          }
+          return msg;
+        });
+        
+        setMessages(processedMessages);
       }
     } catch (error) {
       console.error('Error fetching messages:', error);
@@ -91,7 +137,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         const formData = new FormData();
         formData.append('file', fileToUpload);
         
-        const uploadResponse = await fetch('/api/upload', {
+        const uploadResponse = await fetch(`${API_URL}/api/upload`, {
           method: 'POST',
           body: formData,
         });
@@ -103,7 +149,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }
       }
 
-      const response = await fetch(`/api/conversations/${conversationId}/messages`, {
+      const response = await fetch(`${API_URL}/api/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -185,7 +231,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               Add File
             </Button>
             {(conversationFile || uploadedFile) && (
-              <div className="text-sm text-gray-400">
+              <div className="text-sm text-gray-400 flex items-center">
+                <FileText className="w-4 h-4 mr-1" />
                 File: {(conversationFile || uploadedFile)?.name}
                 {conversationFile && (
                   <Button
