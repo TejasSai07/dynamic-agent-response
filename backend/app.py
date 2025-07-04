@@ -574,7 +574,7 @@ def extract_article_text(url):
 def my_completion(messages):
     """Interact with Azure OpenAI to generate a completion."""
     client = AzureOpenAI(
-        api_key="e353f4ba413e41fbb54023a915ae98e6",
+        api_key=os.environ.get("AZURE_OPENAI_API_KEY", "your-api-key-here"),
         api_version="2024-02-15-preview",
         azure_endpoint="https://radiusofself.openai.azure.com",
         azure_deployment="gpt-4o"
