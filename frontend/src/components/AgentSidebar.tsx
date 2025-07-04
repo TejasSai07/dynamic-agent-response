@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -6,7 +7,6 @@ import { Plus, Settings, Trash2, MessageSquare, X } from 'lucide-react';
 import { Agent, Conversation, AgentDefinition } from '@/types/Agent';
 import { AgentForm } from './AgentForm';
 import { FileUpload } from './FileUpload';
-import { CSVUpload } from './CSVUpload';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -24,8 +24,6 @@ interface AgentSidebarProps {
   onNewConversation: () => void;
   uploadedFile: File | null;
   onFileUpload: (file: File | null) => void;
-  csvFiles: File[];
-  onCsvFilesUpload: (files: File[]) => void;
 }
 
 export const AgentSidebar: React.FC<AgentSidebarProps> = ({
@@ -42,12 +40,9 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
   onNewConversation,
   uploadedFile,
   onFileUpload,
-  csvFiles,
-  onCsvFilesUpload,
 }) => {
   const [showForm, setShowForm] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
-  const [csvUploadEnabled, setCsvUploadEnabled] = useState(false);
 
   const handleCreateAgent = () => {
     setEditingAgent(null);
@@ -55,7 +50,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
   };
 
   const handleEditAgent = (agent: Agent) => {
-    if (agent.is_built_in) return;
+    if (agent.is_built_in) return; // Can't edit built-in agents
     setEditingAgent(agent);
     setShowForm(true);
   };
@@ -74,7 +69,7 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
     event.stopPropagation();
     if (window.confirm('Are you sure you want to delete this conversation?')) {
       try {
-        const response = await fetch(`${API_URL}/api/conversations/${conversationId}`, {
+        const response = await fetch(`${API_URL}/conversation/${conversationId}`, {
           method: 'DELETE',
         });
         if (response.ok) {
@@ -89,10 +84,12 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
   // Filter conversations for the selected agent
   const agentConversations = selectedAgent 
     ? conversations.filter(conv => {
+        // For built-in agents, match by agent_type
         if (selectedAgent.is_built_in) {
           return conv.agent_type === selectedAgent.id;
         }
-        return conv.agent_type === 'custom' || conv.agent_id === selectedAgent.id;
+        // For custom agents, check if conversation belongs to this agent
+        return conv.agent_type === 'custom';
       })
     : [];
 
@@ -140,7 +137,6 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
                     <div className="font-medium">{agent.name}</div>
                     <div className="text-xs text-gray-400 mt-1">
                       {agent.model_type} {agent.is_built_in ? '• Built-in' : '• Custom'}
-                      {agent.csv_upload_enabled && ' • CSV'}
                     </div>
                   </div>
                   {!agent.is_built_in && (
@@ -231,15 +227,6 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = ({
         <FileUpload
           uploadedFile={uploadedFile}
           onFileUpload={onFileUpload}
-        />
-        
-        <Separator className="bg-gray-700 my-4" />
-        
-        <CSVUpload
-          enabled={csvUploadEnabled}
-          onToggle={setCsvUploadEnabled}
-          uploadedFiles={csvFiles}
-          onFilesUpload={onCsvFilesUpload}
         />
       </div>
 
