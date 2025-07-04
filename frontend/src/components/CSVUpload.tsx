@@ -1,9 +1,10 @@
-
 import React, { useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Upload, X, FileText } from 'lucide-react';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 interface CSVUploadProps {
   enabled: boolean;
@@ -15,38 +16,44 @@ interface CSVUploadProps {
 export const CSVUpload: React.FC<CSVUploadProps> = ({
   enabled,
   onToggle,
-  uploadedFiles,
+  uploadedFiles = [], // Add default value here
   onFilesUpload,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const csvFiles = files.filter(file => file.name.endsWith('.csv'));
+    const csvFiles = files.filter(file => 
+      file.name.endsWith('.csv') || 
+      file.name.endsWith('.xlsx') || 
+      file.name.endsWith('.xls')
+    );
     
-    if (csvFiles.length > 0) {
-      // Upload files to backend
-      const formData = new FormData();
-      csvFiles.forEach(file => formData.append('files', file));
+    if (csvFiles.length > 0 && typeof onFilesUpload === 'function') {
+      // Add new files to existing files
+      const newFiles = [...uploadedFiles, ...csvFiles];
+      onFilesUpload(newFiles);
       
-      try {
-        const response = await fetch('/upload_csv', {
-          method: 'POST',
-          body: formData,
-        });
-        
-        if (response.ok) {
-          onFilesUpload([...uploadedFiles, ...csvFiles]);
-        }
-      } catch (error) {
-        console.error('Error uploading CSV files:', error);
-      }
+      console.log('CSV files added:', csvFiles.map(f => f.name));
+    }
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
   const removeFile = (index: number) => {
-    const newFiles = uploadedFiles.filter((_, i) => i !== index);
-    onFilesUpload(newFiles);
+    if (typeof onFilesUpload === 'function') {
+      const newFiles = uploadedFiles.filter((_, i) => i !== index);
+      onFilesUpload(newFiles);
+    }
+  };
+
+  const clearAllFiles = () => {
+    if (typeof onFilesUpload === 'function') {
+      onFilesUpload([]);
+    }
   };
 
   return (
@@ -68,7 +75,7 @@ export const CSVUpload: React.FC<CSVUploadProps> = ({
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".csv"
+            accept=".csv,.xlsx,.xls"
             onChange={handleFileUpload}
             className="hidden"
           />
@@ -84,26 +91,45 @@ export const CSVUpload: React.FC<CSVUploadProps> = ({
 
           {uploadedFiles.length > 0 && (
             <div className="space-y-2">
-              <Label className="text-xs text-gray-400">Uploaded Files:</Label>
-              {uploadedFiles.map((file, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between bg-gray-700 rounded px-3 py-2"
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-gray-400">
+                  Uploaded Files ({uploadedFiles.length}):
+                </Label>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={clearAllFiles}
+                  className="h-6 text-xs text-gray-400 hover:text-red-400"
                 >
-                  <div className="flex items-center space-x-2">
-                    <FileText className="w-4 h-4 text-blue-400" />
-                    <span className="text-sm truncate">{file.name}</span>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => removeFile(index)}
-                    className="h-6 w-6 p-0 text-gray-400 hover:text-red-400"
+                  Clear All
+                </Button>
+              </div>
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {uploadedFiles.map((file, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center justify-between bg-gray-700 rounded px-3 py-2"
                   >
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-              ))}
+                    <div className="flex items-center space-x-2 flex-1 min-w-0">
+                      <FileText className="w-4 h-4 text-green-400 flex-shrink-0" />
+                      <span className="text-sm truncate" title={file.name}>
+                        {file.name}
+                      </span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">
+                        ({(file.size / 1024).toFixed(1)}KB)
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => removeFile(index)}
+                      className="h-6 w-6 p-0 text-gray-400 hover:text-red-400 flex-shrink-0"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

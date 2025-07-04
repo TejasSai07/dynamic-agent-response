@@ -1,12 +1,12 @@
+
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { X } from 'lucide-react';
 import { Agent, AgentDefinition } from '@/types/Agent';
 
 interface AgentFormProps {
@@ -15,148 +15,137 @@ interface AgentFormProps {
   onCancel: () => void;
 }
 
-const AVAILABLE_TOOLS = [
-  'current_date',
-  'web_search',
-  'faiss_knn_search',
-  'extract_key_terms',
-  'knowledge_graph',
-];
-
-const AVAILABLE_MODELS = [
-  'gpt-4o',
-  'gpt-4o-mini',
-  'gpt-4-turbo',
-  'gpt-3.5-turbo',
-];
-
-export const AgentForm: React.FC<AgentFormProps> = ({
-  agent,
-  onSubmit,
-  onCancel,
-}) => {
+export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSubmit, onCancel }) => {
   const [formData, setFormData] = useState({
     name: '',
-    model_type: 'gpt-4o',
+    description: '',
     system_prompt: '',
-    tools: [] as string[],
-    memory_enabled: false,
-    tasks: [] as string[],
+    model_type: 'gpt-4o-mini',
+    memory_enabled: true,
+    csv_upload_enabled: false,
   });
 
   useEffect(() => {
     if (agent) {
       setFormData({
         name: agent.name,
+        description: agent.description,
+        system_prompt: agent.system_prompt,
         model_type: agent.model_type,
-        system_prompt: '', // This would need to be fetched from the backend
-        tools: [], // This would need to be fetched from the backend
-        memory_enabled: agent.memory_enabled || false,
-        tasks: [],
+        memory_enabled: agent.memory_enabled,
+        csv_upload_enabled: agent.csv_upload_enabled || false,
       });
     }
   }, [agent]);
 
-  const handleToolToggle = (tool: string, checked: boolean) => {
-    setFormData(prev => ({
-      ...prev,
-      tools: checked
-        ? [...prev.tools, tool]
-        : prev.tools.filter(t => t !== tool),
-    }));
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(formData);
+    onSubmit({
+      ...formData,
+      is_built_in: false,
+    });
+  };
+
+  const handleChange = (field: string, value: any) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   return (
-    <Dialog open={true} onOpenChange={() => onCancel()}>
-      <DialogContent className="sm:max-w-[500px] bg-gray-800 text-white border-gray-700">
-        <DialogHeader>
-          <DialogTitle>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold">
             {agent ? 'Edit Agent' : 'Create New Agent'}
-          </DialogTitle>
-        </DialogHeader>
+          </h2>
+          <Button
+            onClick={onCancel}
+            variant="ghost"
+            size="sm"
+            className="text-gray-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label htmlFor="name">Agent Name</Label>
             <Input
               id="name"
               value={formData.name}
-              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => handleChange('name', e.target.value)}
               className="bg-gray-700 border-gray-600 text-white"
               required
             />
           </div>
 
           <div>
-            <Label htmlFor="model">Model</Label>
-            <Select value={formData.model_type} onValueChange={(value) => setFormData(prev => ({ ...prev, model_type: value }))}>
-              <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-gray-700 border-gray-600">
-                {AVAILABLE_MODELS.map((model) => (
-                  <SelectItem key={model} value={model} className="text-white hover:bg-gray-600">
-                    {model}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => handleChange('description', e.target.value)}
+              className="bg-gray-700 border-gray-600 text-white"
+              rows={3}
+            />
           </div>
 
           <div>
-            <Label htmlFor="prompt">System Prompt</Label>
+            <Label htmlFor="system_prompt">System Prompt</Label>
             <Textarea
-              id="prompt"
+              id="system_prompt"
               value={formData.system_prompt}
-              onChange={(e) => setFormData(prev => ({ ...prev, system_prompt: e.target.value }))}
-              className="bg-gray-700 border-gray-600 text-white min-h-[100px]"
-              placeholder="You are a helpful assistant..."
+              onChange={(e) => handleChange('system_prompt', e.target.value)}
+              className="bg-gray-700 border-gray-600 text-white"
+              rows={6}
+              placeholder="Define the agent's role, personality, and instructions..."
               required
             />
           </div>
 
           <div>
-            <Label>Tools</Label>
-            <div className="space-y-2 mt-2">
-              {AVAILABLE_TOOLS.map((tool) => (
-                <div key={tool} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={tool}
-                    checked={formData.tools.includes(tool)}
-                    onCheckedChange={(checked) => handleToolToggle(tool, checked as boolean)}
-                    className="border-gray-600"
-                  />
-                  <Label htmlFor={tool} className="text-sm">
-                    {tool.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                  </Label>
-                </div>
-              ))}
-            </div>
+            <Label htmlFor="model_type">Model Type</Label>
+            <Select value={formData.model_type} onValueChange={(value) => handleChange('model_type', value)}>
+              <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="gpt-4o-mini">GPT-4O Mini</SelectItem>
+                <SelectItem value="gpt-4o">GPT-4O</SelectItem>
+                <SelectItem value="claude-3-sonnet">Claude 3 Sonnet</SelectItem>
+                <SelectItem value="claude-3-haiku">Claude 3 Haiku</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex items-center space-x-2">
             <Switch
-              id="memory"
+              id="memory_enabled"
               checked={formData.memory_enabled}
-              onCheckedChange={(checked) => setFormData(prev => ({ ...prev, memory_enabled: checked }))}
+              onCheckedChange={(checked) => handleChange('memory_enabled', checked)}
             />
-            <Label htmlFor="memory">Enable Memory</Label>
+            <Label htmlFor="memory_enabled">Enable Memory</Label>
           </div>
 
-          <div className="flex gap-2 pt-4">
-            <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
-              Cancel
+          <div className="flex items-center space-x-2">
+            <Switch
+              id="csv_upload_enabled"
+              checked={formData.csv_upload_enabled}
+              onCheckedChange={(checked) => handleChange('csv_upload_enabled', checked)}
+            />
+            <Label htmlFor="csv_upload_enabled">Enable CSV Upload</Label>
+          </div>
+
+          <div className="flex space-x-3 pt-4">
+            <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
+              {agent ? 'Update Agent' : 'Create Agent'}
             </Button>
-            <Button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700">
-              {agent ? 'Update' : 'Create'} Agent
+            <Button type="button" onClick={onCancel} variant="outline">
+              Cancel
             </Button>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
 };

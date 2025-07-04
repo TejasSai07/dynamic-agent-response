@@ -1,9 +1,7 @@
-
 import React, { useState } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronDown, ChevronUp, Code, BarChart3, Brain } from 'lucide-react';
+import { ChevronDown, ChevronRight, Code, BarChart3, Brain, CheckCircle, Star, Play } from 'lucide-react';
 import { ChatMessage } from '@/types/Agent';
 
 interface ChatResponseCardProps {
@@ -11,193 +9,210 @@ interface ChatResponseCardProps {
 }
 
 export const ChatResponseCard: React.FC<ChatResponseCardProps> = ({ message }) => {
-  const [codeExpanded, setCodeExpanded] = useState(false);
-  const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const [showCode, setShowCode] = useState(false);
 
-  // For data analysis agent with reasoning steps
-  if (message.reasoning_steps && message.reasoning_steps.length > 0) {
-    return (
-      <div className="space-y-3">
-        {/* Final Answer - Always Visible */}
-        <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2 mb-3">
-              <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-              <span className="text-sm font-medium text-green-400">Final Answer</span>
-            </div>
-            <div className="text-white font-medium">
-              {message.content}
-            </div>
-          </CardContent>
-        </Card>
+  // Helper to parse markdown-style bold (**text**) to <strong>
+  const formatContent = (content: string) => {
+    return content.split(/(\*\*.*?\*\*)/).map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={index} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+  };
 
-        {/* Reasoning Steps - Collapsible */}
-        <Collapsible open={reasoningExpanded} onOpenChange={setReasoningExpanded}>
-          <CollapsibleTrigger asChild>
-            <Button
-              variant="outline"
-              className="w-full justify-between bg-gray-800 border-gray-700 hover:bg-gray-700"
-            >
-              <div className="flex items-center space-x-2">
-                <Brain className="w-4 h-4" />
-                <span>Reasoning Steps ({message.reasoning_steps.length})</span>
-              </div>
-              {reasoningExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-2 space-y-3">
-              {message.reasoning_steps.map((step, index) => (
-                <Card key={index} className="bg-gray-800 border-gray-700">
-                  <CardContent className="p-4">
-                    <div className="text-sm font-medium text-blue-400 mb-2">
-                      Step {step.step_number}
-                    </div>
-                    <div className="text-white mb-3">{step.reasoning}</div>
-                    
-                    {step.code && (
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-400 mb-2">Code:</div>
-                        <pre className="bg-gray-900 p-3 rounded text-sm text-gray-300 overflow-x-auto">
-                          <code>{step.code}</code>
-                        </pre>
-                      </div>
-                    )}
-                    
-                    {step.output && (
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-400 mb-2">Output:</div>
-                        <pre className="bg-gray-900 p-3 rounded text-sm text-green-300">
-                          {step.output}
-                        </pre>
-                      </div>
-                    )}
-                    
-                    {step.error && (
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-400 mb-2">Error:</div>
-                        <pre className="bg-gray-900 p-3 rounded text-sm text-red-300">
-                          {step.error}
-                        </pre>
-                      </div>
-                    )}
-                    
-                    {step.plot_path && (
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-400 mb-2">Generated Plot:</div>
-                        <img
-                          src={`/${step.plot_path}`}
-                          alt="Generated Plot"
-                          className="max-w-full h-auto rounded"
-                        />
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
+  const isFinalAnswer = message.isComplete === true && message.finalAnswer;
 
-        {/* Show plots if available */}
-        {message.plot_paths && message.plot_paths.length > 0 && (
-          <Card className="bg-gray-800 border-gray-700">
-            <CardContent className="p-4">
-              <div className="flex items-center space-x-2 mb-3">
-                <BarChart3 className="w-4 h-4" />
-                <span className="text-sm font-medium">Generated Plots</span>
-              </div>
-              <div className="space-y-3">
-                {message.plot_paths.map((plotPath, index) => (
-                  <img
-                    key={index}
-                    src={`/${plotPath}`}
-                    alt={`Generated Plot ${index + 1}`}
-                    className="max-w-full h-auto rounded"
-                  />
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-    );
-  }
+  // 👇 FIX: Combine possible sources of plot paths
+  const plotPaths =
+    message.plot_paths ||
+    message.final_output?.plot_paths ||
+    [];
 
-  // For knowledge extraction agent or simple responses
   return (
-    <div className="space-y-3">
-      {/* Main Response */}
-      <Card className="bg-gray-800 border-gray-700">
-        <CardContent className="p-4">
-          <div className="flex items-center space-x-2 mb-3">
-            <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-            <span className="text-sm font-medium text-green-400">Response</span>
-          </div>
-          <div className="text-white">
-            {message.content}
-          </div>
-        </CardContent>
-      </Card>
+    <div className="bg-gray-800 rounded-lg p-4 space-y-3">
 
-      {/* Tool Usage Info */}
-      {message.tool_used && (
-        <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="p-4">
-            <div className="text-sm text-gray-400 mb-2">
-              Used tool: <span className="text-blue-400">{message.tool_used}</span>
-            </div>
-            {message.tool_output && (
-              <pre className="bg-gray-900 p-3 rounded text-sm text-gray-300 overflow-x-auto">
-                {typeof message.tool_output === 'string' ? message.tool_output : JSON.stringify(message.tool_output, null, 2)}
-              </pre>
-            )}
-          </CardContent>
-        </Card>
+      {/* ✅ Final Answer */}
+      {isFinalAnswer && (
+        <div className="bg-gradient-to-r from-green-900/50 to-blue-900/50 border border-green-500/30 rounded-lg p-4 mb-4">
+          <div className="flex items-center mb-2">
+            <Star className="w-5 h-5 text-yellow-400 mr-2" />
+            <h3 className="text-lg font-bold text-white">Final Answer</h3>
+            <CheckCircle className="w-5 h-5 text-green-400 ml-2" />
+          </div>
+          <div className="text-green-100 whitespace-pre-wrap">
+            {formatContent(message.finalAnswer)}
+          </div>
+        </div>
       )}
 
-      {/* Code Section - if available */}
+      {/* Reasoning (non-final) */}
+      {!isFinalAnswer && (
+        <div className="border-l-4 border-blue-500 pl-4">
+          <div className="flex items-center mb-2">
+            <Brain className="w-4 h-4 mr-2 text-blue-400" />
+            <span className="text-sm font-medium text-blue-300">Reasoning Step</span>
+          </div>
+          <div className="text-white whitespace-pre-wrap">
+            {formatContent(message.content)}
+          </div>
+        </div>
+      )}
+
+      {/* Executed Code */}
       {message.code && (
-        <Collapsible open={codeExpanded} onOpenChange={setCodeExpanded}>
+        <Collapsible open={showCode} onOpenChange={setShowCode}>
           <CollapsibleTrigger asChild>
             <Button
-              variant="outline"
-              className="w-full justify-between bg-gray-800 border-gray-700 hover:bg-gray-700"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start text-green-400 hover:text-green-300"
             >
-              <div className="flex items-center space-x-2">
-                <Code className="w-4 h-4" />
-                <span>Generated Code</span>
-              </div>
-              {codeExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              {showCode ? <ChevronDown className="w-4 h-4 mr-2" /> : <ChevronRight className="w-4 h-4 mr-2" />}
+              <Code className="w-4 h-4 mr-2" />
+              {isFinalAnswer ? 'View Final Code' : 'View Code Executed'}
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <Card className="mt-2 bg-gray-800 border-gray-700">
-              <CardContent className="p-4">
-                <pre className="bg-gray-900 p-3 rounded text-sm text-gray-300 overflow-x-auto">
-                  <code>{message.code}</code>
-                </pre>
-              </CardContent>
-            </Card>
+            <div className="bg-gray-900 rounded p-3 mt-2">
+              <pre className="text-sm text-green-400 overflow-x-auto">
+                <code>{message.code}</code>
+              </pre>
+            </div>
           </CollapsibleContent>
         </Collapsible>
       )}
 
-      {/* Single Plot */}
-      {message.plot_path && (
-        <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-2 mb-3">
-              <BarChart3 className="w-4 h-4" />
-              <span className="text-sm font-medium">Generated Plot</span>
+      {/* Execution Output */}
+      {message.output && (
+        <div className="bg-gray-900 rounded p-3 border-l-4 border-yellow-500">
+          <div className="flex items-center mb-2">
+            <Play className="w-4 h-4 mr-2 text-yellow-400" />
+            <span className="text-sm font-medium text-yellow-300">Execution Output</span>
+          </div>
+          <pre className="text-sm text-gray-300 overflow-x-auto whitespace-pre-wrap">
+            {message.output}
+          </pre>
+        </div>
+      )}
+
+      {/* Execution Error */}
+      {message.error && (
+        <div className="bg-red-900/20 border border-red-500/30 rounded p-3">
+          <div className="flex items-center mb-2">
+            <span className="text-sm font-medium text-red-300">Error</span>
+          </div>
+          <pre className="text-sm text-red-400 overflow-x-auto whitespace-pre-wrap">
+            {message.error}
+          </pre>
+        </div>
+      )}
+
+      {/* ✅ Plot Paths (final or intermediate) */}
+      {plotPaths.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center text-green-400">
+            <BarChart3 className="w-4 h-4 mr-2" />
+            <span className="text-sm font-medium">Generated Plots ({plotPaths.length})</span>
+          </div>
+          <div className="grid grid-cols-1 gap-4">
+            {plotPaths.map((plotPath, index) => (
+              <div key={`${message.timestamp}-${index}`} className="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                <img
+                  src={`${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/${plotPath.replace(/^\/?/, '')}`}
+                  alt={`Plot ${index + 1}`}
+                  className="w-full h-auto rounded border border-gray-600 max-w-full"
+                  style={{ maxHeight: '500px', objectFit: 'contain' }}
+                  onError={(e) => {
+                    console.error('Failed to load plot:', plotPath);
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Step-by-step Analysis Reasoning */}
+      {message.reasoning_steps && message.reasoning_steps.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center text-purple-400">
+            <Brain className="w-4 h-4 mr-2" />
+            <span className="text-sm font-medium">Analysis Steps ({message.reasoning_steps.length})</span>
+          </div>
+          {message.reasoning_steps.map((step, index) => (
+            <div key={index} className="bg-gray-900 rounded p-3 border-l-4 border-purple-500">
+              <div className="flex items-center mb-2">
+                <span className="bg-purple-600 text-white text-xs px-2 py-1 rounded mr-2">
+                  Step {step.step_number}
+                </span>
+                {step.step_number === message.reasoning_steps!.length && (
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                )}
+              </div>
+
+              {step.reasoning && (
+                <div className="mb-3">
+                  <h4 className="text-sm font-medium text-purple-300 mb-1">Reasoning:</h4>
+                  <p className="text-sm text-gray-300 leading-relaxed">{step.reasoning}</p>
+                </div>
+              )}
+
+              {step.next_step && (
+                <div className="mb-3">
+                  <h4 className="text-sm font-medium text-blue-300 mb-1">Next Step:</h4>
+                  <p className="text-sm text-gray-300 leading-relaxed">{step.next_step}</p>
+                </div>
+              )}
+
+              {step.code && (
+                <div className="mb-3">
+                  <h4 className="text-sm font-medium text-green-300 mb-1">Code Executed:</h4>
+                  <pre className="text-xs text-green-400 bg-gray-800 p-2 rounded overflow-x-auto">
+                    <code>{step.code}</code>
+                  </pre>
+                </div>
+              )}
+
+              {step.output && (
+                <div className="mb-2">
+                  <h4 className="text-sm font-medium text-blue-300 mb-1">Output:</h4>
+                  <pre className="text-xs text-gray-300 bg-gray-800 p-2 rounded overflow-x-auto max-h-32">
+                    {step.output}
+                  </pre>
+                </div>
+              )}
+
+              {step.error && (
+                <div className="mb-2">
+                  <h4 className="text-sm font-medium text-red-300 mb-1">Error:</h4>
+                  <pre className="text-xs text-red-400 bg-gray-800 p-2 rounded overflow-x-auto">
+                    {step.error}
+                  </pre>
+                </div>
+              )}
+
+              {/* Step-specific plot fallback */}
+              {step.plot_path && (
+                <div className="mt-2">
+                  <h4 className="text-sm font-medium text-green-300 mb-1">Generated Plot:</h4>
+                  <div className="bg-gray-800 rounded p-2">
+                    <img
+                      src={`${import.meta.env.VITE_API_URL}/${step.plot_path}`}
+                      alt={`Step ${step.step_number} Plot`}
+                      className="w-full h-auto rounded max-w-md"
+                      onError={(e) => {
+                        console.error('Failed to load plot:', step.plot_path);
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
-            <img
-              src={`/${message.plot_path}`}
-              alt="Generated Plot"
-              className="max-w-full h-auto rounded"
-            />
-          </CardContent>
-        </Card>
+          ))}
+        </div>
       )}
     </div>
   );

@@ -1,54 +1,51 @@
-
-export interface Agent {
+export interface AgentDefinition {
   id: string;
   name: string;
   description: string;
+  system_prompt: string;
   model_type: string;
-  memory_enabled?: boolean;
+  memory_enabled: boolean;
   is_built_in: boolean;
+  csv_upload_enabled?: boolean;
 }
 
-export interface Conversation {
-  id: string;
-  agent_type: string;
-  label: string;
-  latest_timestamp: string;
+export interface Agent extends AgentDefinition {
+  // Additional runtime properties if needed
 }
 
 export interface ChatMessage {
-  id?: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  timestamp?: string;
+  timestamp: string;
+  reasoning_steps?: ReasoningStep[];
+  plot_paths?: string[];
   code?: string;
+  finalAnswer?: string;
+  final_output?: {
+    plot_paths?: string[];
+    [key: string]: any;
+  };
+  isComplete?: boolean;
   output?: string;
   error?: string;
-  plot_path?: string;
-  plot_paths?: string[];
-  tool_used?: string;
-  tool_payload?: any;
-  tool_output?: any;
-  step_number?: number;
-  reasoning_steps?: ReasoningStep[];
-  has_pickled_objects?: boolean;
 }
+
 
 export interface ReasoningStep {
   step_number: number;
   reasoning: string;
   next_step: string;
   code: string;
-  output?: string;
-  error?: string;
-  plot_path?: string;
+  output: string;
+  error: string;
+  plot_path: string | null;
 }
 
-export interface AgentDefinition {
+export interface Conversation {
   id: string;
-  name: string;
-  model_type: string;
-  system_prompt: string;
-  tools: string[];
-  memory_enabled: boolean;
-  tasks: string[];
+  agent_type: string;
+  agent_id?: string;
+  label: string;
+  latest_timestamp: string;
+  created_at: string;
 }

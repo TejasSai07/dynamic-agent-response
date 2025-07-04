@@ -9,6 +9,8 @@ const Index = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [csvFiles, setCsvFiles] = useState<File[]>([]);
+
 
   useEffect(() => {
     fetchAgents();
@@ -134,27 +136,33 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gray-900 text-white flex">
       <AgentSidebar
-        agents={agents}
-        selectedAgent={selectedAgent}
-        onAgentSelect={handleAgentSelect}
-        onAgentCreate={handleAgentCreate}
-        onAgentUpdate={handleAgentUpdate}
-        onAgentDelete={handleAgentDelete}
-        conversations={conversations}
-        selectedConversation={selectedConversation}
-        onConversationSelect={setSelectedConversation}
-        onConversationDelete={handleConversationDelete}
-        onNewConversation={handleNewConversation}
-        uploadedFile={uploadedFile}
-        onFileUpload={setUploadedFile}
-      />
+  agents={agents}
+  selectedAgent={selectedAgent}
+  onAgentSelect={handleAgentSelect}
+  onAgentCreate={handleAgentCreate}
+  onAgentUpdate={handleAgentUpdate}
+  onAgentDelete={handleAgentDelete}
+  conversations={conversations}
+  selectedConversation={selectedConversation}
+  onConversationSelect={setSelectedConversation}
+  onConversationDelete={handleConversationDelete}
+  onNewConversation={handleNewConversation}
+  uploadedFile={uploadedFile}
+  onFileUpload={setUploadedFile}
+  csvFiles={csvFiles}
+  onCsvFilesUpload={setCsvFiles}
+/>
+
       <div className="flex-1">
         <ChatInterface
-          selectedAgent={selectedAgent}
-          conversationId={selectedConversation}
-          uploadedFile={uploadedFile}
-          onFileUpload={setUploadedFile}
-        />
+  selectedAgent={selectedAgent}
+  conversationId={selectedConversation}
+  uploadedFile={uploadedFile}
+  onFileUpload={setUploadedFile}
+  csvFiles={csvFiles}
+  onCsvFilesUpload={setCsvFiles}
+/>
+
       </div>
     </div>
   );

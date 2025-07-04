@@ -5,6 +5,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Send, Bot, User, Upload, X, FileText } from 'lucide-react';
 import { Agent, ChatMessage } from '@/types/Agent';
 import { ChatResponseCard } from './ChatResponseCard';
+import { useToast } from '@/hooks/use-toast';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
@@ -13,6 +14,8 @@ interface ChatInterfaceProps {
   conversationId: string | null;
   uploadedFile: File | null;
   onFileUpload: (file: File | null) => void;
+  csvFiles: File[];
+  onCsvFilesUpload: (files: File[]) => void;
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -20,6 +23,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   conversationId,
   uploadedFile,
   onFileUpload,
+  csvFiles = [],
+  onCsvFilesUpload,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -27,6 +32,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [conversationFile, setConversationFile] = useState<File | null>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (conversationId) {
@@ -35,204 +41,155 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setMessages([]);
     }
   }, [conversationId]);
-
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
-    }
-  }, [messages]);
-
+  
   const fetchMessages = async () => {
     if (!conversationId) return;
-    
     try {
       const response = await fetch(`${API_URL}/api/conversations/${conversationId}/messages`);
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Process the messages to handle different response formats
-        const processedMessages = data.map((msg: any) => {
-          // Handle custom agent responses that might contain execution_history
-          if (msg.role === 'assistant' && typeof msg.content === 'string') {
-            try {
-              // Try to parse if content is JSON (from custom agents)
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+
+      const processedMessages: ChatMessage[] = data.map((msg: any) => {
+        if (msg.role === 'assistant' && typeof msg.content === 'string') {
+          try {
+            if (msg.content.trim().startsWith('{')) {
               const parsed = JSON.parse(msg.content);
-              if (parsed.execution_history) {
-                // Convert execution history to reasoning steps format
-                const reasoning_steps = parsed.execution_history.map((exec: any, index: number) => ({
-                  step_number: index + 1,
-                  reasoning: exec.reasoning || '',
-                  next_step: exec.next_step || '',
-                  code: exec.code_to_execute || '',
-                  output: exec.result?.output || '',
-                  error: exec.result?.error || '',
-                  plot_path: exec.result?.returned_objects?.plot_path || null
-                }));
-                
-                return {
-                  ...msg,
-                  content: parsed.final_answer || 'Analysis completed.',
-                  reasoning_steps,
-                  plot_paths: parsed.execution_history
-                    .map((exec: any) => exec.result?.returned_objects?.plot_path)
-                    .filter(Boolean)
-                };
-              } else if (parsed.updated_answer || parsed.code) {
-                // Handle custom agent direct responses
-                return {
-                  ...msg,
-                  content: parsed.updated_answer || parsed.reasoning || msg.content,
-                  code: parsed.code || undefined
-                };
-              }
-            } catch (e) {
-              // If not JSON, return as is
-              return msg;
+              
+              // For custom agents, check if this is truly complete
+              const isActuallyComplete = parsed.is_complete === true;
+              
+              return {
+                ...msg,
+                content: parsed.updated_answer || parsed.reasoning || msg.content,
+                code: parsed.code ?? undefined,
+                finalAnswer: isActuallyComplete ? (parsed.updated_answer || parsed.reasoning) : undefined,
+                isComplete: isActuallyComplete,
+                plot_paths: parsed.plot_paths ?? [],
+                output: parsed.output || undefined,
+                error: parsed.error || undefined,
+              };
             }
+          } catch (e) {
+            console.log('Content is not JSON, treating as plain text:', e);
           }
-          return msg;
-        });
-        
-        setMessages(processedMessages);
-      }
+        }
+        return msg;
+      });
+
+      setMessages(processedMessages);
     } catch (error) {
       console.error('Error fetching messages:', error);
+      toast({ title: 'Error', description: 'Failed to fetch messages.', variant: 'destructive' });
     }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setConversationFile(file);
-    }
+    if (file) setConversationFile(file);
   };
 
   const removeConversationFile = () => {
     setConversationFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    const uploadedPaths: string[] = [];
+    for (const file of files) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await fetch(`${API_URL}/api/upload`, { method: 'POST', body: formData });
+        if (response.ok) {
+          const data = await response.json();
+          uploadedPaths.push(data.file_path);
+        }
+      } catch (error) {
+        console.error('Upload failed for file:', file.name, error);
+      }
     }
+    return uploadedPaths;
   };
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || !conversationId || isLoading) return;
-
     const userMessage: ChatMessage = {
       role: 'user',
       content: inputValue,
       timestamp: new Date().toISOString(),
     };
-
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
+    const currentInput = inputValue;
     setInputValue('');
     setIsLoading(true);
 
     try {
-      // Upload file if present (prioritize conversation-specific file over global file)
-      let file_path = null;
-      const fileToUpload = conversationFile || uploadedFile;
-      
-      if (fileToUpload) {
-        const formData = new FormData();
-        formData.append('file', fileToUpload);
-        
-        const uploadResponse = await fetch(`${API_URL}/api/upload`, {
-          method: 'POST',
-          body: formData,
-        });
-        
-        if (uploadResponse.ok) {
-          const uploadData = await uploadResponse.json();
-          file_path = uploadData.file_path;
-          console.log('File uploaded successfully:', file_path);
-        }
-      }
-
+      const filesToUpload = [conversationFile, uploadedFile, ...csvFiles].filter(Boolean);
+      const file_paths = filesToUpload.length > 0 ? await uploadFiles(filesToUpload) : [];
       const response = await fetch(`${API_URL}/api/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: inputValue,
-          file_path: file_path,
-        }),
+        body: JSON.stringify({ message: currentInput, file_paths }),
       });
-
-      if (response.ok) {
-        // Refresh messages to get the AI response
-        fetchMessages();
-      }
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      await fetchMessages();
+      toast({ title: 'Message sent', description: 'Your message has been sent successfully!' });
     } catch (error) {
       console.error('Error sending message:', error);
+      toast({ title: 'Error', description: 'Failed to send message.', variant: 'destructive' });
+      setInputValue(currentInput);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
-  if (!selectedAgent) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-gray-900">
-        <div className="text-center text-gray-400">
-          <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
-          <h2 className="text-xl font-medium mb-2">No Agent Selected</h2>
-          <p>Select an agent from the sidebar to start chatting</p>
-        </div>
+  if (!selectedAgent) return (
+    <div className="flex-1 flex items-center justify-center bg-gray-900">
+      <div className="text-center text-gray-400">
+        <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
+        <h2 className="text-xl font-medium mb-2">No Agent Selected</h2>
+        <p>Select an agent from the sidebar to start chatting</p>
       </div>
-    );
-  }
+    </div>
+  );
 
-  if (!conversationId) {
-    return (
-      <div className="flex-1 flex items-center justify-center bg-gray-900">
-        <div className="text-center text-gray-400">
-          <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
-          <h2 className="text-xl font-medium mb-2">No Conversation Selected</h2>
-          <p>Start a new conversation to begin chatting with {selectedAgent.name}</p>
-        </div>
+  if (!conversationId) return (
+    <div className="flex-1 flex items-center justify-center bg-gray-900">
+      <div className="text-center text-gray-400">
+        <Bot className="w-16 h-16 mx-auto mb-4 opacity-50" />
+        <h2 className="text-xl font-medium mb-2">No Conversation Selected</h2>
+        <p>Start a new conversation to begin chatting with {selectedAgent.name}</p>
       </div>
-    );
-  }
+    </div>
+  );
+
+  const totalFileCount = [conversationFile, uploadedFile, ...csvFiles].filter(Boolean).length;
 
   return (
     <div className="flex-1 flex flex-col bg-gray-900">
-      {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 p-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold">{selectedAgent.name}</h2>
+            <h2 className="text-lg font-semibold">{selectedAgent?.name}</h2>
             <p className="text-sm text-gray-400">
-              {selectedAgent.model_type} • Memory: {selectedAgent.memory_enabled ? 'On' : 'Off'}
+              {selectedAgent?.model_type} • Memory: {selectedAgent?.memory_enabled ? 'On' : 'Off'}
+              {selectedAgent?.csv_upload_enabled && ' • CSV Upload Enabled'}
             </p>
           </div>
-          
-          {/* Conversation-specific file upload */}
           <div className="flex items-center space-x-2">
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,.txt,.json"
+              accept=".csv,.txt,.json,.xlsx"
               onChange={handleFileUpload}
               className="hidden"
             />
-            <Button
-              onClick={() => fileInputRef.current?.click()}
-              variant="outline"
-              size="sm"
-              className="bg-gray-700 border-gray-600 hover:bg-gray-600"
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              Add File
+            <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm" className="bg-gray-700 border-gray-600 hover:bg-gray-600">
+              <Upload className="w-4 h-4 mr-2" /> Add File
             </Button>
-            {(conversationFile || uploadedFile) && (
+            {totalFileCount > 0 && (
               <div className="text-sm text-gray-400 flex items-center">
-                <FileText className="w-4 h-4 mr-1" />
-                File: {(conversationFile || uploadedFile)?.name}
+                <FileText className="w-4 h-4 mr-1" /> Files: {totalFileCount}
                 {conversationFile && (
                   <Button
                     size="sm"
@@ -249,18 +206,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
       </div>
 
-      {/* Messages */}
       <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-        <div className="space-y-4 max-w-4xl mx-auto">
+        <div className="space-y-4 max-w-5xl mx-auto">
           {messages.map((message, index) => (
-            <div key={index}>
+            <div key={`${message.timestamp}-${index}`}>
               {message.role === 'user' ? (
                 <div className="flex items-start space-x-3">
                   <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center">
                     <User className="w-4 h-4" />
                   </div>
                   <div className="flex-1 bg-gray-800 rounded-lg p-4">
-                    <p className="text-white">{message.content}</p>
+                    <p className="text-white whitespace-pre-wrap">{message.content}</p>
                   </div>
                 </div>
               ) : message.role === 'assistant' ? (
@@ -275,7 +231,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               ) : null}
             </div>
           ))}
-          
           {isLoading && (
             <div className="flex items-start space-x-3">
               <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center">
@@ -292,15 +247,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
       </ScrollArea>
 
-      {/* Input */}
       <div className="border-t border-gray-700 p-4">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-5xl mx-auto">
           <div className="flex space-x-2">
             <Textarea
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder={`Message ${selectedAgent.name}...`}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
+              placeholder={`Message ${selectedAgent?.name}...`}
               className="flex-1 bg-gray-800 border-gray-600 text-white resize-none"
               rows={1}
             />

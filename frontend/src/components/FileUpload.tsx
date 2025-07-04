@@ -36,7 +36,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.txt,.json"
+        accept=".csv,.txt,.json,.xlsx,.xls"
         onChange={handleFileUpload}
         className="hidden"
       />
@@ -54,15 +54,20 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         <div className="space-y-2">
           <Label className="text-xs text-gray-400">Uploaded File:</Label>
           <div className="flex items-center justify-between bg-gray-700 rounded px-3 py-2">
-            <div className="flex items-center space-x-2">
-              <FileText className="w-4 h-4 text-blue-400" />
-              <span className="text-sm truncate">{uploadedFile.name}</span>
+            <div className="flex items-center space-x-2 flex-1 min-w-0">
+              <FileText className="w-4 h-4 text-blue-400 flex-shrink-0" />
+              <span className="text-sm truncate" title={uploadedFile.name}>
+                {uploadedFile.name}
+              </span>
+              <span className="text-xs text-gray-400 flex-shrink-0">
+                ({(uploadedFile.size / 1024).toFixed(1)}KB)
+              </span>
             </div>
             <Button
               size="sm"
               variant="ghost"
               onClick={removeFile}
-              className="h-6 w-6 p-0 text-gray-400 hover:text-red-400"
+              className="h-6 w-6 p-0 text-gray-400 hover:text-red-400 flex-shrink-0"
             >
               <X className="w-3 h-3" />
             </Button>

@@ -41,7 +41,7 @@ from sqlalchemy import Column, LargeBinary
 from sqlalchemy import and_, or_
 
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 CORS(app, resources={r"/*": {"origins": "http://localhost:8080"}}, supports_credentials=True)
 
@@ -61,12 +61,14 @@ import matplotlib.pyplot as plt
 #     response.headers.add('Access-Control-Allow-Credentials', 'true')
 #     return response
 
+
 client = AzureOpenAI(
-    api_key="e353f4ba413e41fbb54023a915ae98e6",
+    api_key=os.environ.get("AZURE_OPENAI_API_KEY", "your-api-key-here"),
     api_version="2024-02-15-preview",
     azure_endpoint="https://radiusofself.openai.azure.com",
     azure_deployment="gpt-4o"
 )
+
 
 class AgentDefinition(db.Model):
     __tablename__ = 'agent_definitions'
@@ -116,10 +118,31 @@ class ChatHistory(db.Model):
     def save_objects(self, objects_dict):
         """Pickle and save Python objects"""
         try:
-            self.pickled_objects = pickle.dumps(objects_dict)
+            # Filter out non-picklable objects (e.g., modules, functions)
+            # This is a critical step to prevent pickling errors
+            filtered_objects = {}
+            for key, obj in objects_dict.items():
+                try:
+                    # Attempt to pickle a dummy object to check picklability
+                    # This is a more robust check than type checking
+                    pickle.dumps(obj)
+                    filtered_objects[key] = obj
+                except TypeError as e:
+                    print(f"⚠️ Warning: Object '{key}' of type {type(obj)} is not picklable. Skipping. Error: {e}")
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not check picklability of object '{key}': {e}")
+
+
+            if filtered_objects:
+                print(f"📦 Pickling filtered objects: {filtered_objects.keys()}")
+                self.pickled_objects = pickle.dumps(filtered_objects)
+            else:
+                self.pickled_objects = None
+                print("No picklable objects to save.")
+
         except Exception as e:
             print(f"Error pickling objects: {e}")
-    
+
     def load_objects(self):
         """Load pickled Python objects"""
         if not self.pickled_objects:
@@ -985,33 +1008,61 @@ def handle_other_tools(tool_id, tool_payload):
 def send_message(conversation_id):
     """Send a message to an agent"""
     try:
-        data = request.json
-        message = data.get('message')
-        file_path = data.get('file_path')  # Optional for data_analysis agent
+        print(f"📨 Received request for conversation: {conversation_id}")
+        data = request.json or {}
+        print(f"🧾 Request data: {data}")
+
+        message = data.get('message', '').strip()
+        file_paths = data.get('file_paths', [])
         
-        # Load preserved objects from the last conversation state
-        history = ChatHistory.query.filter_by(conversation_id=conversation_id).order_by(ChatHistory.timestamp.desc()).first()
-        if not history:
-            return jsonify({"error": "Conversation not found"}), 404
-            
-        preserved_objects = history.load_objects() if hasattr(history, 'load_objects') else {}
-        print(f"🔄 Restored context: {list(preserved_objects.keys())}")
+        preserved_objects = {}
+        last_memory_state = ChatHistory.query.filter(
+            ChatHistory.conversation_id == conversation_id,
+            ChatHistory.pickled_objects.isnot(None)
+        ).order_by(ChatHistory.timestamp.desc()).first()
+
+        if last_memory_state:
+            print("🧠 Found and loaded a previous state from the database.")
+            preserved_objects = last_memory_state.load_objects()
+        else:
+            print("🧠 No previous state found. Starting fresh.")
+
+        valid_paths = [p for p in file_paths if p and os.path.exists(p)]
+        if valid_paths:
+            print(f"📂 Loading new files for this turn: {valid_paths}")
+            for file_path in valid_paths:
+                try:
+                    content, content_type = load_file_by_type(file_path)
+                    # Create clean variable names without file extensions
+                    file_name = os.path.basename(file_path)
+                    clean_name = os.path.splitext(file_name)[0]  # Remove extension
+                    
+                    # Use a more user-friendly variable name
+                    if content_type == 'df':
+                        var_name = f"df_{clean_name}" if not clean_name.startswith('df') else clean_name
+                    else:
+                        var_name = f"{content_type}_{clean_name}"
+                    
+                    preserved_objects[var_name] = content
+                    print(f"📊 Loaded {content_type} as variable: {var_name}")
+                except Exception as e:
+                    print(f"⚠️ Error loading file {file_path}: {e}")
         
-        # Get the agent info for this conversation
+        print(f"🔄 Current state includes objects: {list(preserved_objects.keys())}")
+
+        # Fetch agent info
         agent_query = db.session.query(
-            ChatHistory.agent_type, 
+            ChatHistory.agent_type,
             ChatHistory.model_type,
             ChatHistory.agent_definition_id
-        ).filter_by(
-            conversation_id=conversation_id
-        ).first()
-        
+        ).filter_by(conversation_id=conversation_id).first()
+
         if not agent_query:
-            return jsonify({"error": "Conversation not found"}), 404
-            
+            return jsonify({"error": "Agent not found"}), 404
+
         agent_type, model_type, agent_definition_id = agent_query
-        
-        # Save user message to database
+
+        # Save user message
         user_message = ChatHistory(
             conversation_id=conversation_id,
             agent_type=agent_type,
@@ -1020,199 +1071,245 @@ def send_message(conversation_id):
             role="user",
             content=message
         )
-        
         db.session.add(user_message)
         db.session.commit()
-        
-        # Handle message based on agent type
+
+        # Handle based on agent type
         if agent_type == 'data_analysis':
-            result = handle_data_analysis(conversation_id, message, file_path)
+            result = handle_data_analysis(conversation_id, message, valid_paths[0] if valid_paths else None)
+
         elif agent_type == 'knowledge_extraction':
             result = handle_knowledge_extraction(conversation_id, message)
+
         elif agent_type == 'custom' and agent_definition_id:
-            # Handle custom agent
             definition = AgentDefinition.query.get(agent_definition_id)
-            if definition:
-                result = handle_custom_agent(conversation_id, message, definition, file_path, preserved_objects)
-            else:
+            if not definition:
                 return jsonify({"error": "Agent definition not found"}), 404
+
+            # Forward only the first file for now (extendable later)
+            result = handle_custom_agent(conversation_id, message, definition,
+                                         preserved_objects=preserved_objects)
         else:
-            return jsonify({"error": "Invalid agent type"}), 400
-            
+            return jsonify({"error": "Unsupported agent type"}), 400
+
         return result
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Internal error: {str(e)}"}), 500
+
+@dataclass
+class AgentState:
+    data: dict
+    def __init__(self, initial_data):
+        self.data = initial_data
+
 
 def handle_custom_agent(conversation_id, message, definition, file_path=None, preserved_objects={}):
-    """Handle messages for custom agents defined by users"""
     try:
         print(f"Starting custom agent handler for conversation {conversation_id}")
-        print(f"Agent definition: {definition.name}, Model: {definition.model_type}")
-        print(f"User message: {message}")
-        # Parse the tools configuration
-        tools = json.loads(definition.tools) if definition.tools else []
+
+        plot_paths_accumulated = []
         system_prompt = definition.system_prompt
-        if "json" not in system_prompt.lower():
-            system_prompt += "\n\nIMPORTANT: Your response MUST be a JSON object with the following structure:\n"
-            system_prompt += "{\n"
-            system_prompt += "  \"reasoning\": \"Your explanation here\",\n"
-            system_prompt += "  \"code_to_execute\": \"Python code if any\",\n"
-            system_prompt += "  \"is_complete\": boolean (true when the task is finished, false otherwise)\n"
-            system_prompt += "}\n"
-            system_prompt += "Always include the 'is_complete' field in your response."
-        # Initialize messages list with the system prompt
-        messages = [{"role": "system", "content": system_prompt}]
         
-        # Add conversation history for context
+        system_prompt += (
+            "\n\nIMPORTANT: Your response MUST be a JSON object. "
+            "Your main goal is to solve the user's request step-by-step. "
+            "If you need to write and execute code, provide it in the 'code' field. "
+            "After execution, I will provide you with the output and errors. "
+            "Based on that feedback, you will plan your next step."
+            "🔒 SYSTEM REQUIREMENT 🔒 : FIRST UNDERSTAND WHAT IS IN THE OBJECT for e.g if DF then do df.columns(), df.head(), df.describe() etc."
+            "🔒 SYSTEM REQUIREMENT 🔒 : You MUST re-use the returned_objects dictionary already present in memory if it exists, instead of reinitializing it. Do not use returned_objects = {} if one is already available."
+            "🔒 SYSTEM REQUIREMENT 🔒 : When saving plots, you MUST save them to the 'static' folder using os.makedirs('static', exist_ok=True') AND record the file path into returned_objects['plot_paths']"
+            "🔒 SYSTEM REQUIREMENT 🔒 : Make sure no spaces are there in the file path"
+            "🔒 SYSTEM REQUIREMENT 🔒 : Make sure the plot paths are added to returned_objects using returned_objects.setdefault('plot_paths', []).append(path)"
+            "🔒 SYSTEM REQUIREMENT 🔒 : VERY IMPORTANTTTTTT: If you want to print, you can't think it acts like a notebook. YOU HAVE TO PRINT IT by calling print and other relevant functions!"
+            "🔒 SYSTEM REQUIREMENT 🔒 : This is NOT a notebook — previous code cells do NOT persist. All functions and variables must be redefined or explicitly carried forward using `'persist_state': true`"
+            "\n\nJSON Structure:"
+            "{\n"
+            "  \"reasoning\": \"Your thought process and explanation for EACH step. ***DO NOT use 'updated_answer' or any other key. This is the only supported explanation key***\",\n"
+            "  \"code\": \"The Python code to execute for this step. (can be an empty string)\",\n"
+            "  \"persist_state\": boolean (Set to true ONLY when you want to save the current variables for future turns),\n"
+            "  \"is_complete\": boolean (Set to true ONLY when the final answer is ready and all tasks are done.)\n"
+            "}\n"
+        ) 
+    
+        messages = [{"role": "system", "content": system_prompt}]
+
+        if preserved_objects:
+            available_vars = ", ".join(preserved_objects.keys())
+            initial_state_message = (
+                f"The following variables have been restored/loaded and are available for use: {available_vars}. "
+                "These are already loaded in memory - DO NOT reload them from files. "
+                "**IMPORTANT AND REQUIRED** - Start by inspecting them (e.g., with `.head()`, `.columns`, `.info()`) to understand their structure before proceeding."
+            )
+            messages.append({"role": "system", "content": initial_state_message})
+            
         conversation_history = ChatHistory.query.filter(
             ChatHistory.conversation_id == conversation_id,
-            ChatHistory.role.in_(["user", "assistant"])  # Use in_() operator
-            ).order_by(ChatHistory.timestamp).all()
-        
+            ChatHistory.role.in_(["user", "assistant"])
+        ).order_by(ChatHistory.timestamp).all()
+
         for msg in conversation_history:
             messages.append({"role": msg.role, "content": msg.content})
-        
-        # Add the current user message
         messages.append({"role": "user", "content": message})
-        
-        # Handle file processing for data analysis functionality
-        if file_path and 'data' in message.lower():
-            try:
-                if "," in file_path:
-                    file_paths = [path.strip() for path in file_path.split(",")]
-                    dataframes = []
-                    for path in file_paths:
-                        df_new = pd.read_csv(path)
-                        filename = os.path.basename(path)
-                        df_new['source_file'] = filename
-                        dataframes.append(df_new)
-                    preserved_objects['dataframes'] = dataframes
-                    preserved_objects['df'] = dataframes[0]
-                else:
-                    df = pd.read_csv(file_path)
-                    preserved_objects['df'] = df
-            except Exception as e:
-                return jsonify({"error": f"Error processing file: {str(e)}"}), 500
-        
-        # Process the message with tools
+
         not_complete = True
         final_answer = None
         reasoning_steps = []
         count = 0
-        max_iterations = 10
+        max_iterations = 15
+
+        state = AgentState(initial_data=preserved_objects)
         
         while not_complete and count < max_iterations:
             count += 1
-            
-            # Get AI response based on model type
             raw_output = get_model_completion(messages, definition.model_type)
-            print(f"Raw LLM output: {raw_output}")
+
             try:
-                output = json.loads(raw_output)
-                is_complete = output.get('is_complete', False)
-                reasoning = output.get('reasoning', '')
-                code_to_execute = output.get('code_to_execute', '')
+                output_json = json.loads(raw_output)
             except json.JSONDecodeError:
-                print("Failed to parse JSON from LLM output")
                 # Handle JSON parsing error
-                error_message = ChatHistory(
-                    conversation_id=conversation_id,
-                    agent_type="custom",
-                    model_type=definition.model_type,
-                    agent_definition_id=definition.id,
-                    role="system",
-                    content="Error: Invalid response format"
-                )
-                db.session.add(error_message)
-                db.session.commit()
+                messages.append({"role": "assistant", "content": raw_output})
+                messages.append({"role": "user", "content": "Error: Your last response was not valid JSON. Please correct it and adhere to the specified JSON format."})
                 continue
+            print(f"🔍 Model output JSON: {output_json}")
+            is_complete = output_json.get('is_complete', False)
+            reasoning = output_json.get("reasoning") or output_json.get("updated_answer", "")
+            code_to_execute = output_json.get('code', '')
+            should_persist_state = output_json.get('persist_state', False)
             
-            # Handle tool execution
-            tool_id = output.get('tool_id')
-            tool_payload = output.get('tool_payload', {})
-            tool_output = None
+            # Initialize execution result variables
+            execution_output, execution_error = "", ""
+            execution_result = None
+            plot_paths = []
             
-            if tool_id:
-                # Check if the tool is allowed for this agent
-                tool_allowed = any(t.get('id') == tool_id for t in tools)
+            # Add assistant message to conversation
+            messages.append({"role": "assistant", "content": raw_output})
+            
+            if code_to_execute:
+                print("⚙️ Executing code...")
+                print(f"Code to execute:\n{code_to_execute}")
+                execution_result = execute_code(code_to_execute, state)
+                print(f'Execution result is : {execution_result}')
+                execution_output = execution_result.output
+                execution_error = execution_result.error
+                # Collect all plot paths over multiple iterations
+                persisted_returned = preserved_objects.get("returned_objects", {})
+                persisted_paths = persisted_returned.get("plot_paths", [])
+                new_paths = execution_result.returned_objects.get("plot_paths", [])
+                merged_paths = list(dict.fromkeys(persisted_paths + new_paths))
+                persisted_returned["plot_paths"] = merged_paths
+                preserved_objects["returned_objects"] = persisted_returned
+                plot_paths_accumulated = merged_paths
+                print(plot_paths_accumulated)
+                # Update the main state with any new or modified variables from the execution
+                preserved_objects.update(state.data) 
+                print(f"State updated. Current variables: {list(preserved_objects.keys())}")
                 
-                if tool_allowed:
-                    if tool_id == 'run_faiss_knn':
-                        tool_output = run_faiss_knn(tool_payload)
-                    else:
-                        tool_output = handle_other_tools(tool_id, tool_payload)
+                # Provide feedback to the model
+                feedback = (
+                    f"Your code has been executed.\n"
+                    f"Output (stdout):\n---\n{execution_output or 'No output'}\n---\n"
+                    f"Error:\n---\n{execution_error or 'None'}\n---\n"
+                )
+                if execution_error:
+                    feedback += "The code failed. Please analyze the error and provide the corrected code. Do NOT repeat the failed code."
                 else:
-                    tool_output = {"error": f"Tool '{tool_id}' is not available for this agent"}
-            
-            # Save the assistant's reasoning to the database
+                    feedback += "The code executed successfully. Please proceed to the next step or conclude the task."
+                messages.append({"role": "user", "content": feedback})
+                
+                if should_persist_state and definition.memory_enabled:
+                    print(f"💾 Persisting state for conversation {conversation_id} as requested by the agent.")
+                    memory_message = ChatHistory(
+                        conversation_id=conversation_id,
+                        agent_type="custom",
+                        model_type=definition.model_type,
+                        agent_definition_id=definition.id,
+                        role="system",
+                        content=f"State persisted. Variables saved: {list(preserved_objects.keys())}"
+                    )
+                    memory_message.save_objects(preserved_objects)
+                    db.session.add(memory_message)
+                    db.session.commit()
+                    print("✅ State saved successfully.")
+
+            # Prepare response content with safe defaults
+            response_content = {
+                "updated_answer": reasoning,
+                "code": code_to_execute,
+                "is_complete": is_complete,
+                "output": execution_output,
+                "error": execution_error,
+                "plot_paths": plot_paths_accumulated
+            }
             ai_message = ChatHistory(
                 conversation_id=conversation_id,
                 agent_type="custom",
                 model_type=definition.model_type,
                 agent_definition_id=definition.id,
                 role="assistant",
-                content=output.get('reasoning', ''),
+                content=json.dumps(response_content),
                 code=code_to_execute,
-                tool_used=tool_id,
-                tool_payload=json.dumps(tool_payload) if tool_payload else None,
-                tool_output=json.dumps(tool_output) if tool_output else None,
                 step_number=count
             )
-            
+
             db.session.add(ai_message)
             db.session.commit()
-            
-            # Format the reasoning step for the frontend
+
             reasoning_steps.append({
-                "role": "assistant",
-                "tool_used": f"Tool being used: {tool_id}" if tool_id else None,
-                "tool_payload": f"What is being searched for: {tool_payload}" if tool_payload else None,
-                "tool_output": tool_output,
-                "reasoning": output.get('reasoning', '')
+                "step_number": count,
+                "reasoning": reasoning,
+                "next_step": output_json.get('next_step', ''),
+                "code": code_to_execute,
+                "output": execution_output,
+                "error": execution_error,
+                "plot_paths": plot_paths_accumulated
             })
-            
-            # Check if the interaction is complete
-            is_complete = output.get('is_complete', False)
+            print(reasoning)
             if is_complete:
+                if not plot_paths_accumulated:
+                    final_returned = preserved_objects.get("returned_objects", {})
+                    if "plot_paths" in final_returned:
+                        plot_paths_accumulated.extend(final_returned["plot_paths"])
                 final_answer = {
-                    "reasoning": "FINAL ANSWER:\n\n" + output.get('reasoning', ''),
+                    "reasoning": "FINAL ANSWER:\n\n" + reasoning,
                     "code_to_execute": code_to_execute,
-                    "tool_used": tool_id,
-                    "final_output": None
+                    "final_output": execution_output,
+                    "plot_paths": plot_paths_accumulated
                 }
                 not_complete = False
-            else:
-                # Continue the conversation
-                messages.append({"role": "assistant", "content": raw_output})
-                if tool_output:
-                    messages.append({"role": "user", "content": str(tool_output)})
-        
-        # Save memory if enabled
-        if definition.memory_enabled and preserved_objects:
+
+        # Final state persistence (only if memory is enabled and we have objects to save)
+        if definition.memory_enabled and preserved_objects and not should_persist_state:
             memory_message = ChatHistory(
                 conversation_id=conversation_id,
                 agent_type="custom",
                 model_type=definition.model_type,
                 agent_definition_id=definition.id,
                 role="system",
-                content="Memory state updated"
+                content="Memory state updated at end of conversation"
             )
             memory_message.save_objects(preserved_objects)
             db.session.add(memory_message)
             db.session.commit()
-        print(f"Custom agent handler completed. Is complete: {is_complete}")
-        # Return the result
-        return json.dumps({
+
+        print(f"Custom agent handler completed. Is complete: {not not_complete}")
+        
+        result = {
             "reasoning_steps": reasoning_steps,
             "final_output": final_answer,
-            "preserved_objects": list(preserved_objects.keys()) if preserved_objects else []
-        }, cls=CustomJSONEncoder)
-        
+            "preserved_objects": list(preserved_objects.keys()) if preserved_objects else [],
+            "plot_paths": plot_paths_accumulated
+        }
+        print('Plot Paths:', plot_paths_accumulated)
+        return jsonify(result)
+
     except Exception as e:
+        traceback.print_exc()
         print(f"Error in handle_custom_agent: {e}")
         return jsonify({"error": f"Error in custom agent: {str(e)}"}), 500
-
-
     
 def handle_data_analysis(conversation_id, message, file_path=None):
     """Handle messages for the data analysis agent"""
@@ -1679,47 +1776,68 @@ def delete_agent_definition(definition_id):
 
 
 def execute_code(code: str, state: AgentState) -> ExecutionResult:
+    import os
+    import uuid
+    import json
+    import matplotlib.pyplot as plt
+    import textwrap
 
-    plot_filename = f"static/plot_{uuid.uuid4()}.png"
-    if 'plt.show()' in code:
-        code = code.replace('plt.show()', f'plt.savefig("{plot_filename}")')
-    # Handle empty code string
+    plot_save_code = textwrap.dedent("""
+    import os
+    import matplotlib.pyplot as plt
+    import uuid
+
+    static_dir = os.path.join(os.getcwd(), "backend", "static")
+    os.makedirs(static_dir, exist_ok=True)
+    plot_path = os.path.join(static_dir, f"plot_{uuid.uuid4()}.png")
+    web_path = f"/static/{os.path.basename(plot_path)}"
+    plt.savefig(plot_path)
+    returned_objects.setdefault("plot_paths", []).append(web_path)
+    plt.close()
+    """)
+
+    code = code.replace("plt.show()", plot_save_code)
+
     if not code.strip():
-        return ExecutionResult(
-            output="No code to execute",
-            returned_objects={}
-        )
+        return ExecutionResult(output="No code to execute", returned_objects={})
 
-    local_vars = state.data.copy()
+    shared_env = state.data.copy()
     returned_objects = {}
+    shared_env["returned_objects"] = returned_objects
 
     with OutputCapture() as output:
         try:
-            # Check if code is a single-line expression
             if "\n" not in code and not code.strip().endswith(":"):
-                result = eval(code, {}, local_vars)
+                result = eval(code, shared_env, shared_env)
                 if result is not None:
-                    returned_objects['result'] = result
+                    returned_objects["result"] = str(result)
             else:
-                exec(code, {}, local_vars)
-                returned_objects = {k: v for k, v in local_vars.items() if k not in state.data}
-            # Capture any matplotlib figures
-            if plt.get_fignums():
-                returned_objects['figure'] = plt.gcf()
-                plt.close()
-            if returned_objects:
-                print(f"✅ Storing objects: {list(returned_objects.keys())}")
-            # Track modified variables and persist them into memory
-            for key, value in local_vars.items():
-                if key not in state.data or state.data[key] is not value:
-                    returned_objects[key] = value
-                    state.data[key] = value  # ✅ Store into persistent state
+                exec(code, shared_env, shared_env)
+                for k, v in shared_env.items():
+                    if k not in state.data and k not in ["returned_objects"]:
+                        returned_objects[k] = v
 
-            if os.path.exists(plot_filename):
-                # Add the plot path to returned objects
-                returned_objects['plot_path'] = f"/{plot_filename}"
+            # Catch plots that didn’t use plt.show()
+            if plt.get_fignums():
+                fallback_path = f"static/plot_{uuid.uuid4()}.png"
+                os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
+                plt.savefig(fallback_path)
+                plt.close()
+                returned_objects.setdefault("plot_paths", []).append("/" + fallback_path)
+
+            # Update shared state with serializable values
+            for key, value in shared_env.items():
+                if key not in state.data or state.data[key] is not value:
+                    try:
+                        json.dumps(value, default=str)
+                        state.data[key] = value
+                    except (TypeError, ValueError):
+                        continue
+
             return ExecutionResult(
                 output=output.stdout.getvalue(),
+                error=None,
+                traceback=None,
                 returned_objects=returned_objects
             )
 
@@ -1727,7 +1845,8 @@ def execute_code(code: str, state: AgentState) -> ExecutionResult:
             return ExecutionResult(
                 output=output.stdout.getvalue(),
                 error=str(e),
-                traceback=traceback.format_exc()
+                traceback=traceback.format_exc(),
+                returned_objects=returned_objects
             )
 
 
@@ -2394,7 +2513,7 @@ def create_conversation():
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-        
+
 @app.route('/api/conversations', methods=['GET'])
 def get_conversations():
     """Get all conversation IDs and their agent types"""
@@ -2531,10 +2650,8 @@ def new_conversation():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/conversation/<conversation_id>", methods=["DELETE", "OPTIONS"])
+@app.route("/api/conversations/<conversation_id>", methods=["DELETE", "OPTIONS"])
 def delete_conversation(conversation_id):
-    if request.method == "OPTIONS":
-        return jsonify({"message": "OK"}), 200
     try:
         messages = ChatHistory.query.filter_by(conversation_id=conversation_id).all()
         if not messages:
@@ -2648,10 +2765,62 @@ def upload_file():
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     file.save(filepath)
     return jsonify({"file_path": filepath})
+def load_file_by_type(file_path):
+    ext = os.path.splitext(file_path)[1].lower()
 
-    
+    if ext == ".csv":
+        return pd.read_csv(file_path), "df"
+
+    elif ext == ".json":
+        with open(file_path, "r") as f:
+            return json.load(f), "json"
+
+    elif ext == ".txt":
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read(), "text"
+
+    elif ext == ".xlsx":
+        return pd.read_excel(file_path), "df"
+
+    elif ext == ".pdf":
+        from PyPDF2 import PdfReader
+        reader = PdfReader(file_path)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        return text, "pdf_text"
+
+    return f"[Unsupported file format: {ext}]", "unsupported"
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         initialize_database()
     app.run(debug=True)
+    
+    
+    
+# if file_path and os.path.exists(file_path):
+#             try:
+#                 content, content_type = load_file_by_type(file_path)
+#                 # Ensure the content is stored under a descriptive name in preserved_objects
+#                 # For a CSV, it's likely a DataFrame, so let's name it 'df_0' as in your restored objects.
+#                 # You might need a more robust naming convention if handling multiple files.
+#                 variable_name = "df_0" # Or dynamically generate a unique name
+#                 preserved_objects[variable_name] = content
+
+#                 # --- IMPORTANT CHANGE START ---
+#                 # Inform the LLM that the data is loaded and available
+#                 if isinstance(content, pd.DataFrame):
+#                     preview = content.head(3).to_markdown()
+#                     # Add a message to the conversation history that tells the LLM about the loaded DataFrame
+#                     messages.append({"role": "system", "content": f"A DataFrame named '{variable_name}' has been loaded from the provided file. Here's a preview of its first 3 rows:\n{preview}\n\nTo proceed, inspect the DataFrame further using code like `{variable_name}.columns` or `{variable_name}.info()`."})
+#                     data_loaded_and_communicated = True
+#                 elif isinstance(content, dict):
+#                     messages.append({"role": "system", "content": f"A dictionary named '{variable_name}' has been loaded from the provided file. Keys: {list(content.keys())}\n\nTo proceed, inspect the dictionary further using code like `print({variable_name}.keys())` or `print({variable_name}['some_key'])`."})
+#                     data_loaded_and_communicated = True
+#                 elif isinstance(content, str):
+#                     messages.append({"role": "system", "content": f"A string named '{variable_name}' has been loaded from the provided file. Snippet:\n{content[:500]}\n\nTo proceed, inspect the string further using code like `print({variable_name}[:100])`."})
+#                     data_loaded_and_communicated = True
+#                 # --- IMPORTANT CHANGE END ---
+
+#             except Exception as e:
+#                 return jsonify({"error": f"Error processing uploaded file: {str(e)}"}), 500
